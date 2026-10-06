@@ -21,7 +21,7 @@
 #include "progressBar.h"
 #include "networkit/graph/Graph.hpp"
 #include "networkit/graph/GraphTools.hpp"
-#include "networkit/distance/Dijkstra.hpp"
+//#include "networkit/distance/Dijkstra.hpp"
 #include <string>
 #include "mytimer.h"
 #include "networkit/centrality/DegreeCentrality.hpp"

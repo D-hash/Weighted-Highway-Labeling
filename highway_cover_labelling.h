@@ -8,15 +8,11 @@ class HighwayLabelling {
  public:
   HighwayLabelling(NetworKit::Graph &g, int l, int ordering_type, int changes, int dyntype);
     void ConstructDirWeighHL();
+    void ConstructATMOSDirWeighHL();
     void FarhanConstruction();
-    void ConstructUnweightedNaiveLabelling();
-    void ConstructWeightedNaiveLabelling();
-    void ConstructDirWeighNL();
   int GetNumberOfNodes(){return V;};
   long LabellingSize();
   long DirectedLabellingSize();
-  long NaiveLabellingSize();
-  long DirectedNaiveLabellingSize();
   dist min(dist a, dist b);
 
   // Returns distance vetween vertices v and w if they are connected.
@@ -24,15 +20,12 @@ class HighwayLabelling {
   bool QueryDistanceBound(vertex s, vertex t, dist upperbound);
   bool DirectedQueryDistanceBound(vertex s, vertex t, dist ub);
     dist DirectedQueryDistance(vertex s, vertex t);
-  dist NaiveQueryDistance(vertex s, vertex t);
-  dist DirectedNaiveQueryDistance(vertex s, vertex t);
   dist BFSQuery(vertex s, vertex t);
     dist DijkstraQuery(vertex s, vertex t);
     dist DirectedDijkstra(vertex s, vertex t);
     void GetLandmarks(std::vector<vertex>& lndmrks);
     void GetIncrementalLandmarks(std::vector<vertex>& lndmrks);
   void SetLandmarks(std::vector<vertex>& lndmrks);
-  void StoreIndex(std::string filename);
   dist SPQuery(vertex s, vertex t);
   // INCREMENTAL
   void AddLandmarkUnweighted(vertex r);
@@ -57,12 +50,10 @@ private:
     std::vector<std::vector<std::pair<vertex,dist>>> out_landmarks_distances;
   std::unordered_map<vertex, std::unordered_map<vertex, dist>> highway;
   std::vector<vertex> ordering;
-  std::vector<std::vector<dist>> naive_labeling;
-  std::vector<std::vector<dist>> in_naive_labeling;
-  std::vector<std::vector<dist>> out_naive_labeling;
   std::vector<vertex> landmarks_incremental;
     // temp structures
     std::vector<bool> settled;
+    std::vector<bool> atmos_flag;
     std::vector<dist> dij_distances;
     std::vector<std::pair<dist,bool>> dij_distances_pair;
     std::vector<bool> is_landmark;
@@ -244,7 +235,7 @@ HighwayLabelling::HighwayLabelling(NetworKit::Graph &g, int l, int ordering_type
     //L = L/2;
     for(const auto &v: landmarks) std::cout << v << " ";
     std::cout << "\n";
-    settled.resize(V);
+    atmos_flag.resize(V,false);
     dij_distances.resize(V, null_distance);
     dij_distances_pair.resize(V, std::make_pair(null_distance,true));
     settled.resize(V,false);
@@ -321,31 +312,6 @@ long HighwayLabelling::DirectedLabellingSize() {
   return size;
 }
 
-long HighwayLabelling::NaiveLabellingSize() {
-    long size = 0;
-    for (int i = 0; i < V; i++) {
-        for (int j = 0; j < L; j++) {
-            if(naive_labeling[i][j] != null_distance)
-                size++;
-        }
-    }
-
-    return size;
-}
-
-long HighwayLabelling::DirectedNaiveLabellingSize() {
-    long size = 0;
-    for (int i = 0; i < V; i++) {
-        for (int j = 0; j < L; j++) {
-            if(in_naive_labeling[i][j] != null_distance)
-                size++;
-            if(out_naive_labeling[i][j] != null_distance)
-                size++;
-        }
-    }
-
-    return size;
-}
 
 void HighwayLabelling::FarhanConstruction(){
     landmarks_distances.resize(V);
@@ -518,166 +484,101 @@ void HighwayLabelling::ConstructDirWeighHL() {
         reached_vertices.clear();
         ++hl_bar;
     }
-    // for (const auto& [u, inner_map] : highway) {
-    //     std::cout << "From vertex " << u << ":\n";
-
-    //     for (const auto& [v, d] : inner_map) {
-    //         std::cout << "  -> " << v << " (dist = " << d << ")\n";
-    //     }
-    // }
-    
-    //  for (int v = 0; v < V; v++) {
-    //     std::cout << "L-In(" << v << "): [";
-    //     for (int i = 0; i < in_landmarks_distances[v].size(); i++) {
-    //         std::cout << "(" << in_landmarks_distances[v][i] << "," << in_distances[v][i] << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-    //     std::cout << "L-Out(" << v << "): [";
-    //     for (int i = 0; i < out_landmarks_distances[v].size(); i++) {
-    //         std::cout << "(" << out_landmarks_distances[v][i] << "," << out_distances[v][i] << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-    // }
 }
 
-void HighwayLabelling::ConstructUnweightedNaiveLabelling() {
+
+void HighwayLabelling::ConstructATMOSDirWeighHL() {
     // Initialization
-    naive_labeling.resize(V);
-    for(vertex i = 0; i < V; i++) {
-        naive_labeling[i].resize(L);
-        for(vertex j = 0; j < L; j++)
-            naive_labeling[i][j] = null_distance;
+    in_landmarks_distances.resize(V);
+    out_landmarks_distances.resize(V);
+    for(int i = 0; i < V; i++) {
+        in_landmarks_distances[i].clear();
+        out_landmarks_distances[i].clear();
     }
-
-
-    // Start computing Naive Labelling
-    ProgressStream na_bar(L);
-
-    na_bar.label() << "Unweighted naive labeling construction";
-    for(vertex s = 0; s < L; s++){
-        dist *P = new dist[V];
-        for(vertex j = 0; j < V; j++)
-            P[j] = null_distance;
-        std::queue<vertex> que;
-        que.push(reverse_ordering[s]);
-        naive_labeling[reverse_ordering[s]][s] = 0; P[reverse_ordering[s]] = 0;
-
-        while(!que.empty()){
-            vertex v = que.front();
-            que.pop();
-            naive_labeling[v][s] = P[v];
-
-            for(vertex w: graph.neighborRange(v)){
-                if(P[w]==null_distance){
-                    P[w] = P[v] + 1;
-                    que.push(w);
-                }
-            }
-        }
-    ++na_bar;
+    highway.clear();
+    for(const auto & l1: landmarks) {
+        highway[l1] = std::unordered_map<vertex, dist> ();
     }
+     
+    // Start computing Highway Labelling (HL)
+    ProgressStream hl_bar(L);
 
-}
-
-void HighwayLabelling::ConstructWeightedNaiveLabelling() {
-    // Initialization
-    naive_labeling.resize(V);
-    for(vertex i = 0; i < V; i++) {
-        naive_labeling[i].resize(L);
-        for(vertex j = 0; j < L; j++)
-            naive_labeling[i][j] = null_distance;
-    }
-    ProgressStream na_bar(L);
-
-    na_bar.label() << "Weighted naive labeling construction";
-    for(vertex b = 0; b < L; b++) {
-        bool* settled = new bool[V];
-
-        naive_labeling[reverse_ordering[b]][b] = 0;
+    hl_bar.label() << "ATMOS directed weighted highway labeling construction";
+    std::vector<vertex> reached_vertices;
+    // FORWARD
+    for(const vertex & b : landmarks) {
+        highway[b][b] = 0; 
+        dij_distances[b] = 0;
+        reached_vertices.push_back(b);
+        out_landmarks_distances[b].emplace_back(b,0);
         std::priority_queue<std::pair<dist,vertex>, std::vector<std::pair<dist,vertex>>,
                 PQComparator> pq;
-        pq.push(std::make_pair(0,reverse_ordering[b]));
-        while(!pq.empty()){
+        pq.push(std::make_pair(0,b));
+        while (!pq.empty()) {
             vertex v = pq.top().second;
+            dist delta = pq.top().first;
             pq.pop();
-
-            for(auto w: graph.neighborRange(v)){
-                if(naive_labeling[w][b] > naive_labeling[v][b] + graph.weight(v,w)){
-                    naive_labeling[w][b] = naive_labeling[v][b] + (dist)graph.weight(v,w);
-
-                    settled[w] = settled[v];
-                    pq.push(std::make_pair(naive_labeling[w][b], w));
+            if(settled[v]) continue;
+            if (is_landmark[v] && v != b) {
+                highway[b][v] = delta;
+                atmos_flag[v] = true;
+            }
+            else if(!atmos_flag[v] && v != b)
+                out_landmarks_distances[v].emplace_back(b,delta);
+            settled[v] = true;
+            for (auto w: graph.neighborRange(v)) {
+                    if (dij_distances[w] > dij_distances[v] + graph.weight(v, w)) {
+                        dij_distances[w] = dij_distances[v] + graph.weight(v, w);
+                        reached_vertices.push_back(w);
+                        atmos_flag[w] = atmos_flag[v];
+                        pq.push(std::make_pair(dij_distances[w], w));
+                    }
                 }
-
-            }
+            
         }
-        ++na_bar;
-        delete [] settled;
-    }
-    
-}
-
-void HighwayLabelling::ConstructDirWeighNL() {
-    // Initialization
-    in_naive_labeling.resize(V);
-    out_naive_labeling.resize(V);
-    for(vertex i = 0; i < V; i++) {
-        in_naive_labeling[i].resize(L);
-        out_naive_labeling[i].resize(L);
-        for(vertex j = 0; j < L; j++){
-            in_naive_labeling[i][j] = null_distance;
-            out_naive_labeling[i][j] = null_distance;
-            }
-    }
-    ProgressStream na_bar(L);
-
-    na_bar.label() << "Directed weighted naive labeling construction";
-    for(vertex b = 0; b < L; b++) {
-        bool* settled = new bool[V];
-        std::vector<vertex> reached_vertices;
-        out_naive_labeling[reverse_ordering[b]][b] = 0;
-        std::priority_queue<std::pair<dist,vertex>, std::vector<std::pair<dist,vertex>>,
-                PQComparator> pq;
-        pq.push(std::make_pair(0,reverse_ordering[b]));
-        while(!pq.empty()){
-            vertex v = pq.top().second;
-            pq.pop();
-            reached_vertices.push_back(v);
-            for(auto w: graph.neighborRange(v)){
-                if(out_naive_labeling[w][b] > out_naive_labeling[v][b] + graph.weight(v,w)){
-                    out_naive_labeling[w][b] = out_naive_labeling[v][b] + (dist)graph.weight(v,w);
-
-                    settled[w] = settled[v];
-                    pq.push(std::make_pair(out_naive_labeling[w][b], w));
-                }
-
-            }
-        }
-
-        for(const auto & v: reached_vertices){
+        for (const auto &v: reached_vertices) {
+            dij_distances[v] = null_distance;
             settled[v] = false;
+            atmos_flag[v] = false;
         }
         reached_vertices.clear();
-        in_naive_labeling[reverse_ordering[b]][b] = 0;
+        // REVERSE
+        dij_distances[b] =0;
+        reached_vertices.push_back(b);
+        in_landmarks_distances[b].emplace_back(b,0);
         while(!pq.empty()) pq.pop();
-        pq.push(std::make_pair(0,reverse_ordering[b]));
-        while(!pq.empty()){
+        pq.push(std::make_pair(0,b));
+        while (!pq.empty()) {
             vertex v = pq.top().second;
+            dist delta = pq.top().first;
             pq.pop();
-
-            for(auto w: graph.inNeighborRange(v)){
-                if(in_naive_labeling[w][b] > in_naive_labeling[v][b] + graph.weight(w,v)){
-                    in_naive_labeling[w][b] = in_naive_labeling[v][b] + (dist)graph.weight(w,v);
-
-                    settled[w] = settled[v];
-                    pq.push(std::make_pair(in_naive_labeling[w][b], w));
-                }
-
+            if(settled[v]) continue;
+            if (is_landmark[v] && v != b) {
+                highway[v][b] = delta;
+                atmos_flag[v] = true;
             }
-        }
+            else if(!atmos_flag[v] && v != b){
+                    in_landmarks_distances[v].emplace_back(b,delta);
+                }
+            
+            settled[v] = true;
 
-        ++na_bar;
-        delete [] settled;
+            for (auto w: graph.inNeighborRange(v)) {
+                    if (dij_distances[w] > dij_distances[v] + graph.weight(w,v)) {
+                        dij_distances[w] = dij_distances[v] + graph.weight(w,v);
+                        reached_vertices.push_back(w);
+                        atmos_flag[w] = atmos_flag[v];
+                        pq.push(std::make_pair(dij_distances[w], w));
+                    }
+                }
+        }
+        for (const auto &v: reached_vertices) {
+            dij_distances[v] = null_distance;
+            settled[v] = false;
+            atmos_flag[v] = false;
+        }
+        reached_vertices.clear();
+        ++hl_bar;
     }
     
 }
@@ -938,22 +839,6 @@ dist HighwayLabelling::DirectedQueryDistance(vertex s, vertex t) {
 }
 
 
-dist HighwayLabelling::NaiveQueryDistance(vertex s, vertex t) {
-    dist m = null_distance;
-    for(vertex i = 0; i < L; i++){
-            m = min(m, naive_labeling[s][i]+naive_labeling[t][i]);
-    }
-    return m;
-}
-
-dist HighwayLabelling::DirectedNaiveQueryDistance(vertex s, vertex t) {
-    dist m = null_distance;
-    for(vertex i = 0; i < L; i++){
-            m = min(m, in_naive_labeling[s][i]+out_naive_labeling[t][i]);
-    }
-    return m;
-}
-
 dist HighwayLabelling::BFSQuery(vertex s, vertex t) {
     // Initialization
     dist *s_to_vertices = new dist[V];
@@ -1046,14 +931,6 @@ dist HighwayLabelling::DijkstraQuery(vertex s, vertex t) {
         }
     }
 
-//    auto s_to_vertices = NetworKit::Dijkstra(graph, s, false, false);
-//    s_to_vertices.run();
-//    auto t_to_vertices = NetworKit::Dijkstra(graph, t, false, false);
-//    t_to_vertices.run();
-//    dist m = null_distance;
-//    for(vertex l = 0; l < L; l++){
-//        m = min(s_to_vertices.distance(reverse_ordering[l]) + t_to_vertices.distance(reverse_ordering[l]), m);
-//    }
     dist m = null_distance;
     vertex minhub = 0;
     for(const vertex & l: landmarks){
@@ -1472,37 +1349,6 @@ void HighwayLabelling::AddLandmarkDirected(vertex r) {
 
     reached_vertices.clear();
     L++;
-    
-    // std::cout << "Current landmarks ";
-    // for (const auto& v : landmarks) std::cout << v << " ";
-    // std::cout << "\n";
-
-    // for (const auto& [u, inner_map] : highway) {
-    //     std::cout << "From vertex " << u << ":\n";
-
-    //     for (const auto& [v, d] : inner_map) {
-    //         std::cout << "  -> " << v << " (dist = " << d << ")\n";
-    //     }
-    // }
-
-    // for (int v = 0; v < V; v++) {
-
-    //     std::cout << "L-In(" << v << "): [";
-    //     for (int i = 0; i < in_landmarks_distances[v].size(); i++) {
-    //         std::cout << "("
-    //                 << in_landmarks_distances[v][i].first << ","
-    //                 << in_landmarks_distances[v][i].second << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-
-    //     std::cout << "L-Out(" << v << "): [";
-    //     for (int i = 0; i < out_landmarks_distances[v].size(); i++) {
-    //         std::cout << "("
-    //                 << out_landmarks_distances[v][i].first << ","
-    //                 << out_landmarks_distances[v][i].second << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-    // }
 }
 
 void HighwayLabelling::RemoveLandmarkUnweighted(vertex r) {
@@ -1904,55 +1750,7 @@ void HighwayLabelling::RemoveLandmarkDirected(vertex r) {
         out_reached_vertices.clear();
 
     }
-    // std::cout << "Current landmarks ";
-    // for(const auto& v: landmarks) std::cout << v << " ";
-    // std::cout << "\n";
-    // for (const auto& [u, inner_map] : highway) {
-    //     std::cout << "From vertex " << u << ":\n";
-
-    //     for (const auto& [v, d] : inner_map) {
-    //         std::cout << "  -> " << v << " (dist = " << d << ")\n";
-    //     }
-    // }
-    
-    //  for (int v = 0; v < V; v++) {
-    //     std::cout << "L-In(" << v << "): [";
-    //     for (int i = 0; i < in_landmarks_distances[v].size(); i++) {
-    //         std::cout << "(" << in_landmarks_distances[v][i] << "," << in_distances[v][i] << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-    //     std::cout << "L-Out(" << v << "): [";
-    //     for (int i = 0; i < out_landmarks_distances[v].size(); i++) {
-    //         std::cout << "(" << out_landmarks_distances[v][i] << "," << out_distances[v][i] << "), ";
-    //     }
-    //     std::cout << "]" << std::endl;
-    // }
 }
 
-// inline void HighwayLabelling::StoreIndex(std::string filename) {
-//         std::ofstream ofs(std::string("index/")+std::string(filename) + std::string("index"));
-//     for (int i = 0; i < V; i++) {
-//         vertex C = 0;
-//         for (int j = 0; j < distances[i].size(); j++) {
-//             if(distances[i][j] != null_distance)
-//                 C++;
-//         }
-//         ofs.write((char*)&C, sizeof(C));
-//         for (int j = 0; j < distances[i].size(); j++) {
-//             if(distances[i][j] != null_distance) {
-//                 ofs.write((char*)&j, sizeof(j));
-//                 ofs.write((char*)&distances[i][j], sizeof(distances[i][j]));
-//             }
-//         }
-//     }
-
-//     for (const vertex & v: landmarks) {
-//         for (const vertex & w: landmarks) {
-//             if(highway[v][w] != null_distance)
-//                 ofs.write((char*)&highway[v][w], sizeof(highway[v][w]));
-//         }
-//     }
-//     ofs.close();
-// }
 
 #endif  // HGHWAY_LABELING_H_
